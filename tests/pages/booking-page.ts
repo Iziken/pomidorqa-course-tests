@@ -22,6 +22,10 @@ export class BookingPage {
   upcomingSection: Locator;
   firstCardName: Locator;
 
+  upcomingBookings: Locator;
+  pastMeetingsSection: Locator;
+  pastBookings: Locator;
+
   constructor(page: Page) {
     this.page = page;
     this.filterInput = page.locator("#pomidorqa-catalog-skill-filter");
@@ -48,6 +52,12 @@ export class BookingPage {
       .first()
       .locator("p")
       .first();
+
+    this.upcomingBookings = this.upcomingSection.locator("[data-booking-id]");
+    this.pastMeetingsSection = page
+      .locator("section")
+      .filter({ hasText: "Прошедшие и отменённые" });
+    this.pastBookings = this.pastMeetingsSection.locator("[data-booking-id]");
   }
 
   getPersonCard(name: string): Locator {
@@ -70,7 +80,9 @@ export class BookingPage {
 
   async ensureCalendarVisible(): Promise<Locator> {
     const dayChip = this.calendarDays.first();
-    const isVisible = await dayChip.isVisible({ timeout: 5000 }).catch(() => false);
+    const isVisible = await dayChip
+      .isVisible({ timeout: 5000 })
+      .catch(() => false);
 
     if (!isVisible) {
       await this.page.reload();
@@ -87,7 +99,9 @@ export class BookingPage {
   async loadUpcomingMeetingsAndEnsureData(expectedName: string) {
     await this.goto();
 
-    const textContext = await this.firstCardName.textContent().catch(() => null);
+    const textContext = await this.firstCardName
+      .textContent()
+      .catch(() => null);
     const hasText = textContext ? textContext.includes(expectedName) : false;
 
     if (!hasText) {
@@ -106,5 +120,19 @@ export class BookingPage {
 
   async goto() {
     await this.page.goto(ROUTES.booking);
+  }
+
+  upcomingBookingByParticipant(name: string): Locator {
+    return this.upcomingBookings.filter({ hasText: name });
+  }
+
+  pastBookingByParticipant(name: string): Locator {
+    return this.pastBookings.filter({ hasText: name });
+  }
+
+  async cancelBooking(name: string) {
+    const booking = this.upcomingBookingByParticipant(name);
+    await booking.getByRole("button", { name: "Отменить" }).click();
+    await booking.waitFor({ state: "detached" });
   }
 }
