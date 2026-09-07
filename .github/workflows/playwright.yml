@@ -25,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
         with:
           node-version: 24
           cache: npm # Автоматически кэширует ~/.npm для ускорения последующих шагов установки
@@ -58,10 +58,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
         with:
           node-version: 24
           cache: npm
@@ -72,9 +72,10 @@ jobs:
       - name: Install Playwright dependencies
         run: npx playwright install --with-deps chromium
 
+      # ИСПРАВЛЕНО: Добавлен обязательный ключ name. 
       # Метрика: Корректность изолированной логики (Unit) и сбор покрытия (Coverage).
       # Флаг --coverage заставляет тестовый фреймворк посчитать, какой % функций и строк кода был запущен.
-      # Помогает отслеживать "белые пятна" в тестировании логики.
+      - name: Run Unit tests with coverage
         run: npm run test:unit -- --coverage
         env:
           CI: true
@@ -116,10 +117,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
         with:
           node-version: 24
           cache: npm
@@ -170,7 +171,7 @@ jobs:
       # Помогает быстро понять причину падения теста без локального воспроизведения.
       - name: Upload Playwright report
         if: ${{ !cancelled() }} # Загрузит отчет, даже если тесты упали (но не если сборка была отменена вручную)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4 # ИСПРАВЛЕНО: v7 изменено на стабильную v4 [2]
         with:
           name: playwright-report-${{ github.run_id }}
           path: playwright-report/
@@ -187,12 +188,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
 
       # Метрика эффективности процессов (DORA - Lead Time / Pipeline Duration):
       # Скрипт запрашивает у GitHub API точное время запуска текущего воркфлоу (`run_started_at`),
       # вычитает его из текущего времени и переводит разницу в человекочитаемый формат (минуты и секунды).
-      # Помогает команде видеть, не стал ли CI работать слишком медленно.
       - name: Calculate Pipeline Duration
         id: metrics
         run: |
@@ -227,9 +227,5 @@ jobs:
             *Ветка:* `${{ github.head_ref || github.ref_name }}`
             *Автор:* ${{ github.actor }}
 
-            *Статус провевок:*
+            *Статус проверок:*
             • Линтер и TS: ${{ needs.lint.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
-            • Unit / API / UX Perf: ${{ needs.unit-api.result == 'success' && '✅ Успешно' || (needs.unit-api.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
-            • E2E тесты & Coverage: ${{ needs.e2e.result == 'success' && '✅ Успешно' || (needs.e2e.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
-
-            *Эффективность пайплайна (DORA):*
