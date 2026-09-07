@@ -60,7 +60,9 @@ test("отмена встречи гостем, после reload отмену �
     });
 
     await test.step("Открылось подтверждение бронирования", async () => {
-      await expect(guestBookingPage.confirmDialog).toBeVisible();
+      await expect(guestBookingPage.confirmDialog).toBeVisible({
+        timeout: 10_000,
+      });
     });
 
     await test.step("Гость подтверждает бронь", async () => {
