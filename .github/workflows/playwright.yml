@@ -206,10 +206,9 @@ jobs:
   # =========================================================================
   notify:
     name: Telegram Notification & DORA Metrics
-    # Теперь эта джоба ожидает завершения всех распределенных параллельных задач
     needs: [lint, unit, api, performance, e2e]
     runs-on: ubuntu-latest
-    if: always() # Запускается в любом случае: при полном успехе или при падении любого из тестов
+    if: always() # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Теперь джоба запустится всегда, даже если тесты упали
 
     steps:
       - name: Checkout repository
@@ -221,6 +220,7 @@ jobs:
       # Также собирается статистика по измененным строкам кода (diff_stats) и короткий хэш коммита.
       - name: Calculate Pipeline Duration and Diff Stats
         id: metrics
+        if: always() # Считаем метрики даже при падении тестов
         run: |
           # 1. Расчет времени работы пайплайна
           START_TIME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -251,3 +251,4 @@ jobs:
       # Метрика: Коэффициент успешности пайплайнов (Pipeline Success Rate) и информирование команды.
       # Отправляет в Telegram детальный статус-трекер по каждой задаче с объёмом изменений в коде.
       - name: Send Telegram Message
+        uses: appleboy/telegram-action@master
