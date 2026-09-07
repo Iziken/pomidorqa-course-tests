@@ -208,19 +208,19 @@ jobs:
     name: Telegram Notification & DORA Metrics
     needs: [lint, unit, api, performance, e2e]
     runs-on: ubuntu-latest
-    if: always() # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Теперь джоба запустится всегда, даже если тесты упали
+    if: always() # Джоба запустится всегда, чтобы мы получили отчет и при успехе, и при ошибке
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
       # Метрика эффективности DevOps-процессов (DORA - Lead Time for Changes / Pipeline Duration):
-      # Скрипт обращается по API к GitHub, достает точное время старта воркфлоу,
+      # Скрипт запрашивает у GitHub API точное время старта воркфлоу,
       # сравнивает с текущим временем и считает чистую скорость выполнения всего CI от А до Я.
       # Также собирается статистика по измененным строкам кода (diff_stats) и короткий хэш коммита.
       - name: Calculate Pipeline Duration and Diff Stats
         id: metrics
-        if: always() # Считаем метрики даже при падении тестов
+        if: always()
         run: |
           # 1. Расчет времени работы пайплайна
           START_TIME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -249,6 +249,35 @@ jobs:
         shell: bash
 
       # Метрика: Коэффициент успешности пайплайнов (Pipeline Success Rate) и информирование команды.
-      # Отправляет в Telegram детальный статус-трекер по каждой задаче с объёмом изменений в коде.
+      # Отправляет в Telegram детальный и понятный статус-трекер по каждой задаче с крупным баннером состояния.
       - name: Send Telegram Message
         uses: appleboy/telegram-action@master
+        if: always()
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          format: markdown
+          message: |
+            ${{ (needs.lint.result == 'success' && needs.unit.result == 'success' && needs.api.result == 'success' && needs.performance.result == 'success' && needs.e2e.result == 'success') && '🟢 *ПАЙПЛАЙН УСПЕШНО ПРОЙДЕН!*' || '🔴 *ОБНАРУЖЕНЫ ОШИБКИ В СБОРКЕ!*' }}
+
+            *📦 Репозиторий:* `${{ github.repository }}`
+            *🌿 Ветка:* `${{ github.head_ref || github.ref_name }}` (`${{ github.event_name }}`)
+            *👤 Автор:* ${{ github.actor }}
+            *🔢 Коммит:* [`${{ steps.metrics.outputs.short_sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            *📐 Изменения:* `${{ steps.metrics.outputs.diff_stats }}` lines
+            *💬 Описание:* _${{ github.event.head_commit.message || github.event.pull_request.title }}_
+
+            *📊 Статус проверок:*
+            • Линтер и TS: ${{ needs.lint.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
+            • Unit тесты: ${{ needs.unit.result == 'success' && '✅ Успешно' || (needs.unit.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • API тесты: ${{ needs.api.result == 'success' && '✅ Успешно' || (needs.api.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • UX Perf (Lighthouse): ${{ needs.performance.result == 'success' && '✅ Успешно' || (needs.performance.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • E2E тесты: ${{ needs.e2e.result == 'success' && '✅ Успешно' || (needs.e2e.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+
+            *⏱️ Эффективность пайплайна (DORA):*
+            • Время выполнения (Duration): `${{ steps.metrics.outputs.duration }}`
+            • Итог сборки: ${{ (needs.lint.result == 'success' && needs.unit.result == 'success' && needs.api.result == 'success' && needs.performance.result == 'success' && needs.e2e.result == 'success') && '🟢 SUCCESS' || '🔴 FAILED' }}
+
+            🚀 [Открыть логи сборки](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            ${{ github.event.pull_request.html_url && format('👀 [Открыть Pull Request]({0})', github.event.pull_request.html_url) || '' }}
+            ${{ needs.e2e.result == 'failure' && format('📂 [Скачать Playwright Report]({0}/{1}/actions/runs/{2}/artifacts)', github.server_url, github.repository, github.run_id) || '' }}
