@@ -26,10 +26,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # Скачивает исходный код репозитория на виртуальную машину
+        uses: actions/checkout@v5 # v5 нативно поддерживает Node 24
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5 # v5 нативно поддерживает Node 24
         with:
           node-version: 24
           cache: npm # Кэширует директорию ~/.npm, чтобы ускорить команду `npm ci` при повторных запусках
@@ -59,10 +59,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -91,10 +91,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -122,10 +122,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -155,10 +155,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -213,14 +213,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Метрика эффективности DevOps-процессов (DORA - Lead Time for Changes / Pipeline Duration):
       # Скрипт обращается по API к GitHub, достает точное время старта воркфлоу,
       # сравнивает с текущим временем и считает чистую скорость выполнения всего CI от А до Я.
-      - name: Calculate Pipeline Duration
+      # Также собирается статистика по измененным строкам кода (diff_stats) и короткий хэш коммита.
+      - name: Calculate Pipeline Duration and Diff Stats
         id: metrics
         run: |
+          # 1. Расчет времени работы пайплайна
           START_TIME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             | jq -r '.run_started_at')
@@ -231,22 +233,21 @@ jobs:
           MINUTES=$((DURATION / 60))
           SECONDS=$((DURATION % 60))
           echo "duration=${MINUTES}m ${SECONDS}s" >> $GITHUB_OUTPUT
+
+          # 2. Получение хэша и статистики строк (Diff Stats)
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA=$(echo $COMMIT_SHA | cut -c1-7)
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+          COMMIT_DATA=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/commits/${COMMIT_SHA}")
+          
+          ADDITIONS=$(echo "$COMMIT_DATA" | jq -r '.stats.additions // 0')
+          DELETIONS=$(echo "$COMMIT_DATA" | jq -r '.stats.deletions // 0')
+          
+          echo "diff_stats=+${ADDITIONS} / -${DELETIONS}" >> $GITHUB_OUTPUT
         shell: bash
 
       # Метрика: Коэффициент успешности пайплайнов (Pipeline Success Rate) и информирование команды.
-      # Отправляет в Telegram детальный и понятный статус-трекер по каждой задаче.
+      # Отправляет в Telegram детальный статус-трекер по каждой задаче с объёмом изменений в коде.
       - name: Send Telegram Message
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          format: markdown
-          message: |
-            *📦 Репозиторий:* `${{ github.repository }}`
-            *🌿 Ветка:* `${{ github.head_ref || github.ref_name }}` (`${{ github.event_name }}`)
-            *👤 Автор:* ${{ github.actor }}
-            *💬 Коммит:* _${{ github.event.head_commit.message || github.event.pull_request.title }}_
-
-            *📊 Статус проверок:*
-            • Линтер и TS: ${{ needs.lint.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
-            • Unit тесты: ${{ needs.unit.result == 'success' && '✅ Успешно' || (needs.unit.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
