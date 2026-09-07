@@ -5,11 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch: # Позволяет запускать пайплайн вручную из UI GitHub
+  workflow_dispatch: # Позволяет запускать пайплайн вручную из веб-интерфейса GitHub
 
 # Стратегия Concurrency (Параллелизм):
 # Если разработчик пушит новый коммит в тот же Pull Request, старый (уже запущенный) 
-# пайплайн автоматически отменяется. Это экономит бесплатные минуты CI и снижает очередь сборки.
+# пайплайн автоматически отменяется. Это минимизирует время ожидания в очереди (Queue Time)
+# и экономит бесплатные минуты CI для других участников команды.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,43 +26,75 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/checkout@v4 # Скачивает исходный код репозитория на виртуальную машину
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm # Автоматически кэширует ~/.npm для ускорения последующих шагов установки
+          cache: npm # Кэширует директорию ~/.npm, чтобы ускорить команду `npm ci` при повторных запусках
 
       - name: Install npm dependencies
-        run: npm ci
+        run: npm ci # Чистая установка зависимостей строго по lock-файлу
 
-      # Метрика: Статическая корректность TypeScript кода.
-      # Проверяет типы во всем проекте без генерации JS-файлов. Если кто-то передал 
-      # не тот тип данных в тест или компонент — пайплайн упадет здесь.
+      # Метрика: Статическая корректность TypeScript.
+      # Проверяет отсутствие синтаксических ошибок и несоответствий типов во всем проекте.
+      # Если в кодовой базе есть баги компиляции, пайплайн упадет прямо здесь, не тратя время на тесты.
       - name: TS Type Check
         run: npx tsc --noEmit 
 
-      # Метрика: Соблюдение стайлгайдов и архитектурных правил.
-      # Проверяет код линтером (eslint). Гарантирует отсутствие "мусора" и плохих практик в кодовой базе.
+      # Метрика: Соблюдение стайлгайдов (eslint).
+      # Гарантирует, что код тестов и приложения написан аккуратно и по правилам, заданным в проекте.
       - name: Lint tests
         run: npm run lint
 
   # =========================================================================
-  # JOB 2: UNIT, API ТЕСТЫ И ПРОИЗВОДИТЕЛЬНОСТЬ (PERFORMANCE)
+  # JOB 2: UNIT ТЕСТЫ (Запускаются параллельно после успешного линтера)
   # =========================================================================
-  unit-api:
-    name: Unit, API tests & Performance
-    needs: lint # Запустится только после того, как успешно пройдет линтер и проверка типов
-    timeout-minutes: 20
+  unit:
+    name: Unit tests
+    needs: lint # Запустится только если джоба `lint` прошла успешно
+    timeout-minutes: 15
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright dependencies
+        run: npx playwright install --with-deps chromium # Установка браузеров и системных библиотек Ubuntu
+
+      # Метрика: Работоспособность изолированных функций и компонентов.
+      # Запускает конкретный профиль/проект `unit` внутри экосистемы Playwright.
+      - name: Run Unit tests
+        run: npm run test:unit
+        env:
+          CI: true
+
+  # =========================================================================
+  # JOB 3: API ТЕСТЫ (Запускаются параллельно на отдельной машине)
+  # =========================================================================
+  api:
+    name: API tests
+    needs: lint # Работает параллельно с Unit, E2E и Performance, экономя время сборки
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
@@ -72,55 +105,27 @@ jobs:
       - name: Install Playwright dependencies
         run: npx playwright install --with-deps chromium
 
-      # ИСПРАВЛЕНО: Добавлен обязательный ключ name. 
-      # Метрика: Корректность изолированной логики (Unit) и сбор покрытия (Coverage).
-      # Флаг --coverage заставляет тестовый фреймворк посчитать, какой % функций и строк кода был запущен.
-      - name: Run Unit tests with coverage
-        run: npm run test:unit -- --coverage
-        env:
-          CI: true
-
+      # Метрика: Корректность интеграции бэкенд-эндпоинтов и контрактов данных.
       - name: Run API tests
         run: npm run test:api
         env:
           CI: true
 
-      # Метрика: UX и Производительность интерфейса (Core Web Vitals).
-      # Lighthouse CI эмулирует мобильное устройство / десктоп, замеряет скорость отрисовки (LCP, CLS)
-      # и падает, если оптимизация ухудшилась. Команда `|| echo` предотвращает падение всего CI, 
-      # если вы хотите получать от Lighthouse только предупреждения, а не блокировать сборку.
-      - name: Run Performance Audit (Lighthouse)
-        run: |
-          npm install -g @lhci/cli@0.13.x
-          lhci autorun || echo "Lighthouse completed with warnings"
-        env:
-          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
-
-      # Метрика: Исторический тренд покрытия кода.
-      # Берет сгенерированный на шаге Unit-тестов отчет и отправляет его в Codecov.
-      # В Codecov можно смотреть красивые графики покрытия и настраивать блокировку PR, если покрытие упало.
-      - name: Upload Unit Coverage
-        if: always() # Выполняется всегда, чтобы мы видели покрытие, даже если упали API-тесты
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: unit-tests
-
   # =========================================================================
-  # JOB 3: СКВОЗНЫЕ ТЕСТЫ (E2E) И КЭШИРОВАНИЕ ИНФРАСТРУКТУРЫ
+  # JOB 4: МЕТРИКИ ПРОИЗВОДИТЕЛЬНОСТИ И UX (Запускаются параллельно)
   # =========================================================================
-  e2e:
-    name: Playwright E2E tests & Coverage
+  performance:
+    name: UX Performance Audit
     needs: lint
-    timeout-minutes: 30
+    timeout-minutes: 10
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
@@ -128,14 +133,46 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      # Оптимизация метрики "Время сборки" (Pipeline Duration) и "Время в очереди" (Queue Time):
-      # Вытаскиваем текущую версию Playwright из package.json, чтобы использовать ее как ключ кэша.
+      # Метрика: Качество UX интерфейса сайта (Core Web Vitals).
+      # Lighthouse CI проверяет скорость рендеринга страниц сайта в изолированном контейнере.
+      # Оператор `|| echo` гарантирует, что если сайт стал чуть медленнее, пайплайн выведет предупреждение,
+      # но не заблокирует деплой (при желании блокировать, просто удалите `|| echo ...`).
+      - name: Run Performance Audit (Lighthouse)
+        run: |
+          npm install -g @lhci/cli@0.13.x
+          lhci autorun || echo "Lighthouse completed with warnings"
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+  # =========================================================================
+  # JOB 5: E2E ТЕСТЫ (Самая тяжелая задача, изолированная на своей машине)
+  # =========================================================================
+  e2e:
+    name: Playwright E2E tests
+    needs: lint
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Оптимизация Pipeline Duration: Извлекаем версию Playwright для точного тегирования кэша
       - name: Get Playwright version
         id: playwright-version
         run: echo "version=$(npx playwright --version | awk '{print $2}')" >> $GITHUB_OUTPUT
 
-      # Оптимизация: Проверяем, скачивали ли мы уже браузеры для этой версии Playwright ранее.
-      # Если да (cache-hit) — шаг скачивания пропустится, экономя 1-2 минуты на каждом запуске CI.
+      # Оптимизация: Проверяем, скачивали ли браузеры этой версии ранее.
+      # Если да, они развернутся из кэша GitHub мгновенно, минуя скачивание из сети (~1.5 минуты экономии).
       - name: Cache Playwright Browsers
         id: cache-playwright
         uses: actions/cache@v4
@@ -143,79 +180,61 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
 
-      # Скачиваем Chromium только в том случае, если его не оказалось в кэше (cache-hit != 'true')
+      # Скачиваем браузер только при промахе кэша (cache-hit != 'true')
       - name: Install Chromium and system dependencies
         if: steps.cache-playwright.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
-      # Метрика: Стабильность пользовательских сценариев (End-to-End).
-      # Переменная NODE_ENV: test обычно включает сбор покрытия Istanbul внутри вашего фронтенд-приложения,
-      # чтобы во время кликов Playwright собирал метрику E2E Code Coverage.
+      # Метрика: Стабильность критических пользовательских сценариев.
       - name: Run Playwright E2E tests
         run: npm run test:e2e
         env:
           CI: true
-          NODE_ENV: test 
 
-      # Метрика: Покрытие фронтенда пользовательскими сценариями.
-      # Отправляет отчет о том, какие именно UI-компоненты и ветки кода "потрогал" Playwright на бэкенде/фронтенде.
-      - name: Upload E2E Coverage
-        if: always()
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: e2e-playwright
-
-      # Инструмент разбора полетов (Debug): Сохранение HTML-отчетов Playwright.
-      # Сюда входят скриншоты ошибок, видеозаписи падений и трассировка (Trace Viewer).
-      # Помогает быстро понять причину падения теста без локального воспроизведения.
+      # Инструмент отладки: Сохраняем логи, скриншоты падений и файлы трассировки (.zip) в артефакты GitHub Actions.
+      # Шаг выполнится, даже если тесты упали (`!cancelled()`), чтобы инженеры могли скачать и разобрать ошибки.
       - name: Upload Playwright report
-        if: ${{ !cancelled() }} # Загрузит отчет, даже если тесты упали (но не если сборка была отменена вручную)
-        uses: actions/upload-artifact@v4 # ИСПРАВЛЕНО: v7 изменено на стабильную v4 [2]
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.run_id }}
           path: playwright-report/
-          retention-days: 14 # Храним 14 дней (метрика объема артефактов), чтобы не перегружать хранилище GitHub
+          retention-days: 14 # Метрика хранения: Ограничиваем жизнь артефактов 14 днями, чтобы не тратить дисковую квоту
 
   # =========================================================================
-  # JOB 4: МОНИТОРИНГ ЭФФЕКТИВНОСТИ И УВЕДОМЛЕНИЯ (DORA METRICS & ALERTS)
+  # JOB 6: ПОЛНАЯ DORA-АНАЛИТИКА И СБОР МЕТРИК В TELEGRAM
   # =========================================================================
   notify:
     name: Telegram Notification & DORA Metrics
-    needs: [lint, unit-api, e2e]
+    # Теперь эта джоба ожидает завершения всех распределенных параллельных задач
+    needs: [lint, unit, api, performance, e2e]
     runs-on: ubuntu-latest
-    if: always() # Этот блок выполнится ВСЕГДА (и при успехе, и при падении любого из тестов выше)
+    if: always() # Запускается в любом случае: при полном успехе или при падении любого из тестов
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # ИСПРАВЛЕНО: v6 изменено на стабильную v4
+        uses: actions/checkout@v4
 
-      # Метрика эффективности процессов (DORA - Lead Time / Pipeline Duration):
-      # Скрипт запрашивает у GitHub API точное время запуска текущего воркфлоу (`run_started_at`),
-      # вычитает его из текущего времени и переводит разницу в человекочитаемый формат (минуты и секунды).
+      # Метрика эффективности DevOps-процессов (DORA - Lead Time for Changes / Pipeline Duration):
+      # Скрипт обращается по API к GitHub, достает точное время старта воркфлоу,
+      # сравнивает с текущим временем и считает чистую скорость выполнения всего CI от А до Я.
       - name: Calculate Pipeline Duration
         id: metrics
         run: |
           START_TIME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             | jq -r '.run_started_at')
-          
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          
           START_SECS=$(date -d "$START_TIME" +%s)
           NOW_SECS=$(date -d "$NOW" +%s)
           DURATION=$((NOW_SECS - START_SECS))
           MINUTES=$((DURATION / 60))
           SECONDS=$((DURATION % 60))
-          
           echo "duration=${MINUTES}m ${SECONDS}s" >> $GITHUB_OUTPUT
         shell: bash
 
-      # Метрика: Частота деплоев и коэффициент успешности пайплайнов (Deployment Frequency & Success Rate).
-      # Отправляет агрегированный отчет в Telegram. Команда сразу видит:
-      # 1. Общий статус ("Успешно" или "Ошибка" по каждой джобе).
-      # 2. Общее время ожидания результатов (`Duration`).
-      # 3. Прямую ссылку на логи для быстрого исправления ситуации.
+      # Метрика: Коэффициент успешности пайплайнов (Pipeline Success Rate) и информирование команды.
+      # Отправляет в Telegram детальный и понятный статус-трекер по каждой задаче.
       - name: Send Telegram Message
         uses: appleboy/telegram-action@master
         with:
@@ -223,9 +242,11 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           format: markdown
           message: |
-            *Репозиторий:* `${{ github.repository }}`
-            *Ветка:* `${{ github.head_ref || github.ref_name }}`
-            *Автор:* ${{ github.actor }}
+            *📦 Репозиторий:* `${{ github.repository }}`
+            *🌿 Ветка:* `${{ github.head_ref || github.ref_name }}` (`${{ github.event_name }}`)
+            *👤 Автор:* ${{ github.actor }}
+            *💬 Коммит:* _${{ github.event.head_commit.message || github.event.pull_request.title }}_
 
-            *Статус проверок:*
+            *📊 Статус проверок:*
             • Линтер и TS: ${{ needs.lint.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
+            • Unit тесты: ${{ needs.unit.result == 'success' && '✅ Успешно' || (needs.unit.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
